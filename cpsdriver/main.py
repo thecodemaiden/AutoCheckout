@@ -244,7 +244,7 @@ def generate_receipts(shopping_list, case_name, tokenStr):
         bought = []
         for (item,quantity) in basket.items():
             if quantity <=0: continue
-            bought.append({"barcode":item.barcode, "quantity":quantity})
+            bought.append({"barcode":item.barcode, "quantity":int(quantity)})
         submission["receipts"].append({"target_id":shopper, "products":bought})
     
     with open(outfile, 'w', encoding='utf8') as jsonOut:
@@ -264,7 +264,7 @@ if __name__ == "__main__":
     SAMPLE="nodepth"
     for ii in range(30):
         COMMAND="BASELINE-{}".format(ii+1)
-        #COMMAND="BASELINE-2"
+        #COMMAND="BASELINE-1"
         argstr = f"--command {COMMAND} --sample {SAMPLE} --db-address {DB_ADDRESS} --api-address {API_ADDRESS} --token {TOKEN}"
         cpsdriver_args = argstr.split()
         main(cpsdriver_args)
