@@ -26,7 +26,13 @@ from log import setup_logger
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 setup_logger("info")
 
+def moving_avg(a,n=10,axis=None):
+    if n >= len(a):
+        return np.mean(a, axis=axis)
 
+    ret = np.cumsum(a, axis=axis)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n-1:]/n
 
 def main(args=None):
     args = parse_configs(args)
@@ -98,7 +104,7 @@ def get_sensor_batch(test_client, start_time, batch_length):
     
 def create_shopping_list(test_client, case_name):
     shoppingList = Counter()
-    product_data_file = "{}-products.pkl".format(case_name)
+    product_data_file = "../pickles/{}-products.pkl".format(case_name)
     if not os.path.exists(product_data_file):
         shelf_products, product_info = load_product_locations(test_client)
         with open(product_data_file, 'wb') as productOut:
@@ -116,10 +122,11 @@ def create_shopping_list(test_client, case_name):
         if moreData is None:
             break
         affected_plates = detect_plates_affected(moreData)
+        #logger.debug("Event: {}".format(affected_plates))
         if len(affected_plates) > 0:
             basket_change = select_items_for_changes(affected_plates, shelf_products, product_info)
             if len(basket_change) > 0:
-                shoppingList +=(basket_change)
+                shoppingList.update(basket_change)
 
     # just assign to the first target in the database
     targetList = test_client.find_first_after_time("full_targets",0.0)
@@ -155,7 +162,7 @@ def select_items_for_changes(plate_changes, shelf_contents, product_info):
         if ll[0] == lastLoc[0] and ll[1] == lastLoc[1] and ll[2]-lastLoc[2] == 1:
             # on the same gondola and shelf, adjacent plates
             # do they share any products?
-            thisProductSet = extract_product_ids(shelf_contents[ll]).intersection(lastProductSet)
+            thisProductSet = extract_product_ids(shelf_contents[ll]).union(lastProductSet)
             if len(thisProductSet) > 0:
                 makeNewBin = False
                 changeBin['candidates'] = thisProductSet
@@ -171,6 +178,7 @@ def select_items_for_changes(plate_changes, shelf_contents, product_info):
             changeBin = {
                 'candidates':lastProductSet, 'all_weights':[plateWeight], 'all_plates':[ll]}
 
+    binnedChanges.append(changeBin)
     # now, let's examine those products to see what might have been picked
     item_change = defaultdict(int)
     for event in binnedChanges:
@@ -182,7 +190,7 @@ def select_items_for_changes(plate_changes, shelf_contents, product_info):
 
 def findBestQuantityForItems(event, product_info):
     nPlates = len(event['all_weights'])
-    weight_percent_threshold = 0.1
+    weight_percent_threshold = 1.0/3
     bestProduct = None
     leastVariance = np.inf
     productQuantity = 0
@@ -193,38 +201,39 @@ def findBestQuantityForItems(event, product_info):
             for prod in event['candidates']:
                 info = product_info[prod]
 
+
                 # look at total weight only for now
                 possibleQuantity = math.floor(abs(weightTotal)/info['weight']+0.4)
-                if possibleQuantity == 0: continue
+                if possibleQuantity == 0 or possibleQuantity > 5: continue
+
                 expectedWeight = possibleQuantity*info['weight']
                 weightDiff = abs(weightTotal)-expectedWeight
-                # no putbacks!
-                couldPick = (abs(weightDiff) <= weight_percent_threshold*info['weight'])
-                logger.debug("{}x {} is off by {} ({})".format(possibleQuantity,info['name'], weightDiff, "OK" if couldPick else "NO"))
-                if weightTotal < 0 and couldPick and (weightDiff < leastVariance):
+                varRatio = weightDiff/info['weight']
+                possibleQuantity = possibleQuantity*np.sign(weightTotal)
+                logger.debug("{}x {} is off by {} ({})".format(possibleQuantity,info['name'], weightDiff, varRatio))
+                if abs(varRatio) < weight_percent_threshold and abs(varRatio) < leastVariance:
                     bestProduct = prod
-                    leastVariance = weightDiff
-                    put_back = (weightTotal > 0)
-                    productQuantity = -possibleQuantity if put_back else possibleQuantity
+                    leastVariance = weightDiff/info['weight']
+                    productQuantity = possibleQuantity
     return bestProduct, productQuantity
 
 
 def detect_plates_affected(new_sensor_data):
-    threshold = 20
+    threshold = 5
     affectedPlates = {}
     for (sensorLoc, weightData) in new_sensor_data.items():
         # find the sum of the weight changes, if it's above the threshold, something happened on that plate
         startTime = weightData[0,0];
         endTime = weightData[-1,0];
         startWeight = weightData[0,1];
-        dWeight = startWeight-weightData[:,1]
+        endWeight = weightData[-1,1];
+        filtWeight = np.array(moving_avg(weightData[:,1],10)).reshape(-1,1)
         #weightChange = np.mean(dWeight)
-        weightChange = np.max(np.abs(np.diff(dWeight)))
-        if weightChange > threshold:
-            peakWeight = np.max(np.cumsum(dWeight))
-            lowestWeight = np.min(np.cumsum(dWeight))
-            changeWeight = peakWeight if abs(peakWeight) > abs(lowestWeight) else lowestWeight
-            affectedPlates[sensorLoc] = {'time':(startTime,endTime), 'weight':changeWeight}
+        #weightChange = startWeight-endWeight
+        dW = filtWeight[0] - filtWeight[-1]
+        if abs(dW) > threshold:
+            weightChange = np.sign(dW)*(np.max(weightData[:,1])-np.min(weightData[:,1]))
+            affectedPlates[sensorLoc] = {'time':(startTime,endTime), 'weight':weightChange}
     return affectedPlates
 
 def generate_receipts(shopping_list, case_name, tokenStr):
@@ -234,8 +243,8 @@ def generate_receipts(shopping_list, case_name, tokenStr):
     for (shopper,basket) in shopping_list.items():
         bought = []
         for (item,quantity) in basket.items():
-            if quantity > 3: continue
-            bought.append({"barcode":item.barcode, "quantity":1})
+            if quantity <=0: continue
+            bought.append({"barcode":item.barcode, "quantity":quantity})
         submission["receipts"].append({"target_id":shopper, "products":bought})
     
     with open(outfile, 'w', encoding='utf8') as jsonOut:
@@ -253,9 +262,9 @@ if __name__ == "__main__":
     DB_ADDRESS="mongodb+srv://cpsweek:Rn6ubiLFhiIIriTq@team5-aifi-comp-hxuhd.mongodb.net"
     API_ADDRESS="http://aifi.io/cpsweek/api/v1"
     SAMPLE="nodepth"
-
-    for ii in range(13,30):
+    for ii in range(30):
         COMMAND="BASELINE-{}".format(ii+1)
+        #COMMAND="BASELINE-2"
         argstr = f"--command {COMMAND} --sample {SAMPLE} --db-address {DB_ADDRESS} --api-address {API_ADDRESS} --token {TOKEN}"
         cpsdriver_args = argstr.split()
         main(cpsdriver_args)
