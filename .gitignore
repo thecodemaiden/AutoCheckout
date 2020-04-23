@@ -1,0 +1,4 @@
+*.pkl
+*.json
+result/
+__pycache__/
