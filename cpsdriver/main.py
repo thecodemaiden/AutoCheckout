@@ -122,6 +122,7 @@ def create_shopping_list(test_client, case_name):
         if moreData is None:
             break
         affected_plates = detect_plates_affected(moreData)
+        #TODO: split these up by put back/pick up events, use shopping list to put back items
         #logger.debug("Event: {}".format(affected_plates))
         if len(affected_plates) > 0:
             basket_change = select_items_for_changes(affected_plates, shelf_products, product_info)
@@ -258,13 +259,13 @@ def get_uuid_for_case(case_name):
             return case['uuid']
 
 if __name__ == "__main__":
-    TOKEN="9e8864c9-ece9-4d6b-9aad-eea944ce371e"
-    DB_ADDRESS="mongodb+srv://cpsweek:Rn6ubiLFhiIIriTq@team5-aifi-comp-hxuhd.mongodb.net"
-    API_ADDRESS="http://aifi.io/cpsweek/api/v1"
-    SAMPLE="nodepth"
-    for ii in range(30):
-        COMMAND="BASELINE-{}".format(ii+1)
-        #COMMAND="BASELINE-1"
-        argstr = f"--command {COMMAND} --sample {SAMPLE} --db-address {DB_ADDRESS} --api-address {API_ADDRESS} --token {TOKEN}"
-        cpsdriver_args = argstr.split()
-        main(cpsdriver_args)
+    #files = os.listdir("/home/abannis/Research/AiFi/")
+    #interesting = [f for f in files if "TEAM-" in f]
+    #cases = [f.split('.')[0] for f in interesting]
+
+#    for COMMAND in cases:
+        #COMMAND="BASELINE-{}".format(ii+1)
+    COMMAND="BASELINE-1"
+    argstr = f"--command {COMMAND} --db-address {DB_ADDRESS} --api-address {API_ADDRESS} --token {TOKEN}"
+    cpsdriver_args = argstr.split()
+    main(cpsdriver_args)
